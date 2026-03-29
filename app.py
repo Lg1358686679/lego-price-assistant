@@ -67,12 +67,11 @@ def find_similar_cases(text, threshold=0.8):
             similar.append(case)
     return similar
 
-# ---------- 正则提取（与之前相同）----------
+# ---------- 正则提取 ----------
 def extract_with_regex(line):
     line = line.strip()
     if not line:
         return None, None
-    # 表格行处理
     if '\t' in line:
         parts = line.split('\t')
         models = []
@@ -90,7 +89,6 @@ def extract_with_regex(line):
             if price is not None and price >= 10:
                 return model, price
         return None, None
-    # 普通行
     model_matches = re.findall(r'(?<![0-9])([1-9][0-9]{4})(?![0-9])', line)
     if not model_matches:
         return None, None
@@ -100,7 +98,6 @@ def extract_with_regex(line):
     for num in all_numbers:
         if len(num) != 5 or num[0] == '0':
             price_candidates.append(int(num))
-    # 优先行首数字
     price_match = re.search(r'^(\d+)', line)
     if price_match:
         num = price_match.group(1)
@@ -108,7 +105,6 @@ def extract_with_regex(line):
             price = int(num)
             if price >= 10:
                 return model, price
-    # “收”字前数字
     price_match = re.search(r'(\d+)\s*收', line)
     if price_match:
         num = price_match.group(1)
@@ -116,7 +112,6 @@ def extract_with_regex(line):
             price = int(num)
             if price >= 10:
                 return model, price
-    # 其他数字
     if price_candidates:
         price = price_candidates[0]
         if price >= 10:
@@ -140,7 +135,7 @@ def preprocess_text(text):
     return "\n".join(filtered)
 
 def parse_with_llm(text):
-    # 先尝试正则提取
+    # 正则提取
     lines = text.strip().split('\n')
     regex_results = []
     remaining_lines = []
@@ -155,10 +150,10 @@ def parse_with_llm(text):
             regex_results.append({"model": model, "price": price})
         else:
             remaining_lines.append(line)
-    # 如果还有剩余行，用智谱 API 处理
     if not remaining_lines:
         return regex_results
 
+    # 智谱 API 处理剩余行
     remaining_text = "\n".join(remaining_lines)
     similar_cases = find_similar_cases(remaining_text, threshold=0.5)
     few_shot_examples = ""
@@ -199,7 +194,7 @@ def parse_with_llm(text):
         "Content-Type": "application/json"
     }
     payload = {
-        "model": MODEL_NAME,
+        "model": "glm-4-flash",          # 智谱免费模型
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.1,
         "max_tokens": 8192
@@ -362,4 +357,23 @@ else:
     st.info("暂无已记录型号，请先解析报价。")
 
 st.markdown("---")
-st.caption("数据云端存储，多用户共享。纠错案例自动学习。")
+if st.button("📥 导出所有数据到本地"):
+    price_response = supabase.table("price_records").select("*").execute()
+    df_price = pd.DataFrame(price_response.data)
+    corr_response = supabase.table("corrections").select("*").execute()
+    df_corr = pd.DataFrame(corr_response.data)
+    from io import BytesIO
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_price.to_excel(writer, sheet_name="价格记录", index=False)
+        df_corr.to_excel(writer, sheet_name="纠错案例", index=False)
+    output.seek(0)
+    st.download_button(
+        label="点击下载 Excel 文件",
+        data=output,
+        file_name=f"lego_price_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+st.markdown("---")
+st.caption("数据云端存储，多用户共享。纠错案例自动学习。可随时导出本地备份。")
